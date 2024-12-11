@@ -1,5 +1,6 @@
-let devices = [
-    {
+const Config = {
+    active_scanner: false,
+    devices: [{
         "id": "01",
         "mac": "A4:C1:38:EC:C6:28",
         "location": "Living Room"
@@ -15,12 +16,12 @@ let devices = [
         "id": "04",
         "mac": "A4:C1:38:95:43:B3",
         "location": "Kitchen"
-    }
-];
+    }]
+};
 
 function setup_devices(){
-    for (let i = 0; i < devices.length; i++) {
-        let device = devices[i];
+    for (let i = 0; i < Config.devices.length; i++) {
+        let device = Config.devices[i];
         config_message = {
             "state_topic": "govee/" + device.id  + "/state",
             "device": {
@@ -80,21 +81,30 @@ function setup_devices(){
     }
 }
 
-setup_devices()
-
-BLE.Scanner.Start(
-  options={duration_ms: 5000, active: true},
-  callback=function(event, result) {
+function BLEScanCallback(event, result) {
     if (event === BLE.Scanner.SCAN_RESULT) {
-      for (let i = 0; i < devices.length; i++) {
-        if (devices[i].mac.toLowerCase() === result.addr) {
-          let measurements = readGovee(result);
-          let topic = "govee/" + devices[i].id  + "/state";
-          MQTT.publish(topic, JSON.stringify(measurements), retain=false);
+        for (let i = 0; i < Config.devices.length; i++) {
+            if (Config.devices[i].mac.toLowerCase() === result.addr) {
+                let measurements = readGovee(result);
+                let topic = "govee/" + Config.devices[i].id  + "/state";
+                MQTT.publish(topic, JSON.stringify(measurements), retain=false);
+            }
         }
-      }
     }
-});
+}
+
+function init(){
+    const bleScanner = BLE.Scanner.Start(options={
+        duration_ms: BLE.Scanner.INFINITE_SCAN,
+        active: Config.active_scanner
+    });
+
+    if (!bleScanner) {
+      console.log("Error: Can not start new scanner");
+    }
+
+    BLE.Scanner.Subscribe(BLEScanCallback);
+}
 
 function readGovee(result){
   let data = result.manufacturer_data["ec88"];
@@ -109,3 +119,6 @@ function readGovee(result){
     return measurements;
   }
 }
+
+setup_devices();
+init();
