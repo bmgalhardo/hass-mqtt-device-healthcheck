@@ -38,7 +38,7 @@ function getByteSize(type) {
 }
 
 // functions for decoding and unpacking the service data from Shelly BLU devices
-const ShellyDWLib = {
+const ShellyLib = {
   utoi: function (num, bitsz) {
     const mask = 1 << (bitsz - 1);
     return num & mask ? num - (1 << bitsz) : num;
@@ -125,173 +125,76 @@ const ShellyDWLib = {
 //===================
 // Configurations
 //===================
-const Config = {
-    active_scanner: false,
-    getConfigTopic: function(id){
-        return "homeassistant/device/" + id + "/config";
-    },
-    getStateTopic: function(id){
-        return  "devices/" + id + "/state";
-    },
-    ha_temperature: function(id) {
-        return {
-            "name": "Temperature",
-            "platform": "sensor",
-            "unique_id": id + "_temp",
-            "device_class": "temperature",
-            "unit_of_measurement": "°C",
-            "icon": "mdi:thermometer",
-            "suggested_display_precision": 1,
-            "value_template": "{{ value_json.temperature }}",
+function decoderGovee(result){
+    const data = result.manufacturer_data["ec88"];
+    if (data.length === 6) {
+        const basenum = (data.charCodeAt(1) << 16) | (data.charCodeAt(2) << 8) | data.charCodeAt(3);
+        const measurements = {
+            "temperature": basenum / 10000.0,
+            "humidity": (basenum % 1000) / 10.0,
+            "battery": data.charCodeAt(4) / 1.0,
+            "rssi": result.rssi,
         };
-    },
-    ha_humidity: function(id) {
-        return {
-            "name": "Humidity",
-            "platform": "sensor",
-            "unique_id": id + "_hum",
-            "device_class": "humidity",
-            "unit_of_measurement": "%",
-            "icon": "mdi:water-percent",
-            "suggested_display_precision": 0,
-            "value_template": "{{ value_json.humidity }}",
-        };
-    },
-    ha_battery: function(id) {
-        return {
-            "name": "Battery",
-            "platform": "sensor",
-            "unique_id": id + "_battery",
-            "device_class": "battery",
-            "unit_of_measurement": "%",
-            "icon": "mdi:battery-30",
-            "suggested_display_precision": 0,
-            "value_template": "{{ value_json.battery }}",
-        };
-    },
-    ha_rssi: function(id) {
-        return {
-            "name": "Signal Strength",
-            "platform": "sensor",
-            "unique_id": id + "_rssi",
-            "device_class": "signal_strength",
-            "unit_of_measurement": "dBm",
-            "icon": "mdi:signal",
-            "suggested_display_precision": 0,
-            "value_template": "{{ value_json.rssi }}",
-        };
-    },
-    ha_door: function(id) {
-        return {
-            "name": "State",
-            "platform": "binary_sensor",
-            "unique_id": id + "_state",
-            "device_class": "door",
-            "icon": "mdi:door",
-            "value_template": "{{ value_json.state }}",
-        };
+        return measurements;
     }
 };
 
-const Govee = {
-    manufacturer: "Govee",
-    model: "H5075",
-    decoder: function(result){
-        const data = result.manufacturer_data["ec88"];
-        if (data.length === 6) {
-            const basenum = (data.charCodeAt(1) << 16) | (data.charCodeAt(2) << 8) | data.charCodeAt(3);
-            const measurements = {
-                "temperature": basenum / 10000.0,
-                "humidity": (basenum % 1000) / 10.0,
-                "battery": data.charCodeAt(4) / 1.0,
-                "rssi": result.rssi,
-            };
-            return measurements;
-        }
-    },
-    components: function(id) {
-        return {
-            temperature: Config.ha_temperature(id),
-            humidity: Config.ha_humidity(id),
-            battery: Config.ha_battery(id),
-            rssi: Config.ha_rssi(id),
-        };
-    },
-};
+function decoderShelly (result) {
+    const serviceData = result.service_data["fcd2"];
+    if (!serviceData) return null;
+    const decoded = ShellyLib.unpack(serviceData);
+    if (!decoded) return null;
 
-const Shelly = {
-    manufacturer: "Shelly",
-    model: "SBDW-002C",
-    decoder: function (result) {
-        const serviceData = result.service_data["fcd2"];
-        if (!serviceData) return null;
-        const decoded = ShellyDWLib.unpack(serviceData);
-        if (!decoded) return null;
-        const message = {
-            "state": (decoded.window) ? "ON": "OFF",
-            "battery": decoded.battery,
-            "rssi": result.rssi,
-        };
-        return message;
-    },
-    components: function(id) {
-        return {
-            state: Config.ha_door(id),
-            battery: Config.ha_battery(id),
-            rssi: Config.ha_rssi(id),
-        };
-    },
+    let measurements = {
+        "battery": decoded.battery,
+        "rssi": result.rssi,
+    };
+
+    if (decoded.window != null) {
+        measurements["state"] = (decoded.window) ? "ON": "OFF";
+    }
+    if (decoded.button != null) {
+        const press_map = {
+            1: "single-press",
+            2: "double-press",
+            3: "triple-press",
+            4: "long-press",
+            254: "pressing"
+        }
+        for (let i = 0; i < decoded.button.length; i++) {
+            if (decoded.button[i]) measurements["button_" + i] = press_map[decoded.button[i]];
+        }
+    }
+    return measurements;
 };
 
 const Devices = [
     {
         id: "govee_01",
-        name: "Sensor Living Room",
         mac: "A4:C1:38:EC:C6:28",
-        type: Govee,
+        decoder: decoderGovee,
     }, {
         id: "govee_02",
-        name: "Sensor Babyroom",
         mac: "A4:C1:38:00:5D:34",
-        type: Govee,
+        decoder: decoderGovee,
     }, {
         id: "govee_03",
-        name: "Sensor Bedroom",
         mac: "A4:C1:38:4C:B8:0C",
-        type: Govee,
+        decoder: decoderGovee,
     }, {
         id: "govee_04",
-        name: "Sensor Kitchen",
         mac: "A4:C1:38:95:43:B3",
-        type: Govee,
+        decoder: decoderGovee,
     }, {
         id: "shelly_dw",
-        name: "Entrance",
         mac: "38:39:8f:a6:87:c8",
-        type: Shelly,
+        decoder: decoderShelly,
+    }, {
+        id: "shelly_4_button",
+        mac: "7c:c6:b6:b9:0d:af",
+        decoder: decoderShelly,
     }
 ];
-
-function setup_devices(){
-    for (let i = 0; i < Devices.length; i++) {
-        let device = Devices[i];
-        let config_message = {
-            "state_topic": Config.getStateTopic(device.id),
-            "device": {
-                "identifiers": [device.id],
-                "name": device.name,
-                "manufacturer": device.type.manufacturer,
-                "model": device.type.model,
-            },
-            "origin": {
-                "name": "ble2mqtt"
-            },
-            "components": device.type.components(device.id),
-        };
-        let config_topic = Config.getConfigTopic(device.id);
-        MQTT.publish(config_topic, JSON.stringify(config_message), retain=true);
-    }
-}
 
 function BLEScanCallback(event, result) {
     if (event !== BLE.Scanner.SCAN_RESULT) return;
@@ -299,18 +202,18 @@ function BLEScanCallback(event, result) {
         let device = Devices[i];
         if (device.mac.toLowerCase() !== result.addr) continue;
 
-        let measurements = device.type.decoder(result);
+        let measurements = device.decoder(result);
         if (!measurements) return;
 
-        let topic = Config.getStateTopic(device.id);
+        let topic = "devices/" + device.id + "/state";
         MQTT.publish(topic, JSON.stringify(measurements), retain=false);
     }
 }
 
-function init(){
+function init() {
     const bleScanner = BLE.Scanner.Start(options={
         duration_ms: BLE.Scanner.INFINITE_SCAN,
-        active: Config.active_scanner
+        active: false
     });
 
     if (!bleScanner) {
@@ -320,5 +223,4 @@ function init(){
     BLE.Scanner.Subscribe(BLEScanCallback);
 }
 
-setup_devices();
 init();
